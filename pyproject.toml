@@ -8,3 +8,8 @@ dependencies = [
     "python-frontmatter>=1.1.0",
     "requests>=2.33.1",
 ]
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+]
