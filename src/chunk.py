@@ -1,15 +1,25 @@
 import re
 
 
-def chunk_by_sliding_window(documents: list[dict]) -> list[dict]:
+def chunk_by_sliding_window(documents: list[dict], chunk_size: int = 2000, step: int = 1000) -> list[dict]:
+    """Chunk documents using a sliding window.
+
+    Args:
+        documents: list of document dicts containing a 'content' key.
+        chunk_size: maximum characters per chunk.
+        step: step size for sliding window.
+
+    Returns:
+        list of chunk dicts with original metadata merged in.
+    """
     all_chunks = []
-    
+
     for doc in documents:
         doc_copy = doc.copy()
         content = doc_copy.pop("content")
-        chunks = _chunk_by_sliding_window(seq=content, chunk_size=2000, step=1000)
+        chunks = _chunk_by_sliding_window(seq=content, chunk_size=chunk_size, step=step)
         for chunk in chunks:
-            chunk.update(doc_copy) # Adds the remaining data from doc_copy to chunk (title', 'description', 'filename')
+            chunk.update(doc_copy)
         all_chunks.extend(chunks)
     return all_chunks
 

@@ -3,6 +3,7 @@ import streamlit as st
 import numpy as np
 import os
 import hashlib
+import frontmatter
 
 from src.download import get_files_from_repo
 from src.FE.components import repo_input_form
@@ -13,7 +14,6 @@ from src.agent import create_agent
 
 
 st.set_page_config(page_title="Repo Markdown Explorer", layout="wide")
-st.title("📚 Repo Markdown Explorer")
 
 
 # -------------------------
@@ -26,7 +26,6 @@ def make_id(owner, repo, branch, folder):
 
 
 def get_embedding_path(repo_id):
-    os.makedirs("embeddings", exist_ok=True)
     return f"embeddings/{repo_id}.npy"
 
 
@@ -35,7 +34,16 @@ def get_embedding_path(repo_id):
 # -------------------------
 
 owner, repo, branch, folder, fetch = repo_input_form()
-repo_id = make_id(owner, repo, branch, folder)
+
+# compute repo_id: for uploads create a unique id to avoid reusing stale embeddings
+if st.session_state.get("input_mode") == "Upload Markdown files":
+    import time
+    uploaded = st.session_state.get("uploaded_markdown_files", [])
+    names = [getattr(f, "name", "uploaded.md") for f in uploaded]
+    base = "upload_" + ",".join(names) + "_" + str(time.time())
+    repo_id = hashlib.md5(base.encode()).hexdigest()
+else:
+    repo_id = make_id(owner, repo, branch, folder)
 
 
 # -------------------------
@@ -43,51 +51,91 @@ repo_id = make_id(owner, repo, branch, folder)
 # -------------------------
 
 if fetch:
-    status = st.empty()
-
     try:
-        status.info("Downloading repository...")
-        data = list(
-            get_files_from_repo(
-                owner=owner,
-                repo=repo,
-                extensions=[".md", ".mdx"],
-                branch=branch,
-                folder=folder or None,
-            )
-        )
+        input_mode = st.session_state.get("input_mode")
+
+        # DOWNLOAD (only for GitHub mode) — show spinner in sidebar
+        if input_mode == "GitHub repo":
+            with st.sidebar:
+                with st.spinner("Downloading repository..."):
+                    data = list(
+                        get_files_from_repo(
+                            owner=owner,
+                            repo=repo,
+                            extensions=[".md", ".mdx"],
+                            branch=branch,
+                            folder=folder or None,
+                        )
+                    )
+        else:
+            # UPLOAD MODE — no downloading message in main; just read uploaded files
+            uploaded = st.session_state.get("uploaded_markdown_files", [])
+            data = []
+            for f in uploaded:
+                try:
+                    raw = f.read()
+                    try:
+                        md_content = raw.decode("utf-8")
+                    except Exception:
+                        md_content = raw.decode("utf-8", errors="replace")
+                    fm = frontmatter.loads(md_content)
+                    fm_dict = fm.to_dict()
+                    fm_dict["content"] = fm.content
+                    fm_dict["filename"] = getattr(f, "name", "uploaded.md")
+                    data.append(fm_dict)
+                except Exception:
+                    try:
+                        text = raw.decode("utf-8", errors="replace")
+                    except Exception:
+                        text = ""
+                    data.append({"content": text, "filename": getattr(f, "name", "uploaded.md")})
+
         st.session_state["data"] = data
 
-        status.info("Chunking documents...")
-        chunks = chunk_by_sliding_window(documents=data)
+        # chunking: show spinner in sidebar only when semantic search is enabled
+        use_semantic = st.session_state.get("use_semantic", False)
+        if use_semantic:
+            chunk_size = st.session_state.get("chunk_size", 2000)
+            with st.sidebar:
+                with st.spinner("Chunking documents..."):
+                    chunks = chunk_by_sliding_window(
+                        documents=data, chunk_size=chunk_size, step=chunk_size
+                    )
+        else:
+            chunks = chunk_by_sliding_window(documents=data)
+
         st.session_state["chunks"] = chunks
 
-        status.info("Handling embeddings...")
-        emb_path = get_embedding_path(repo_id)
-
-        if os.path.exists(emb_path):
-            embeddings = np.load(emb_path)
-        else:
-            embedding = Embedding()
-            contents = [c.get("content", "") for c in chunks]
-
+        # embeddings: only when semantic search enabled
+        if use_semantic:
+            emb_path = get_embedding_path(repo_id)
+            st.session_state["processing_embeddings"] = True
             try:
-                embeddings = np.array(embedding.create(content=contents))
-            except Exception:
-                embeddings = np.array(
-                    [embedding.create(content=c) for c in contents]
-                )
+                with st.sidebar:
+                    with st.spinner("Handling embeddings..."):
+                        if os.path.exists(emb_path):
+                            embeddings = np.load(emb_path)
+                        else:
+                            embedding = Embedding()
+                            contents = [c.get("content", "") for c in chunks]
 
-            np.save(emb_path, embeddings)
+                            try:
+                                embeddings = np.array(embedding.create(content=contents))
+                            except Exception:
+                                embeddings = np.array(
+                                    [embedding.create(content=c) for c in contents]
+                                )
 
-        st.session_state["embeddings"] = embeddings
+                            np.save(emb_path, embeddings)
+            finally:
+                st.session_state["processing_embeddings"] = False
 
-        status.success(
-            f"{len(data)} files | {len(chunks)} chunks | {len(embeddings)} embeddings ready"
-        )
+            st.session_state["embeddings"] = embeddings
+        else:
+            st.session_state["embeddings"] = None
 
     except Exception as e:
-        status.error(f"Processing error: {e}")
+        st.sidebar.error(f"Processing error: {e}")
 
 
 # -------------------------
@@ -100,23 +148,23 @@ embeddings = st.session_state.get("embeddings", None)
 
 
 # -------------------------
-# SINGLE STATUS DISPLAY
+# SIDEBAR STATUS (show only after processing)
 # -------------------------
-
 if data or chunks:
-    st.divider()
-    st.subheader("📊 Repository Status")
+    # hide metrics while embeddings are being processed
+    if not st.session_state.get("processing_embeddings", False):
+        with st.sidebar:
+            st.divider()
+            st.subheader("📊 Repository Status")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Files", len(data))
+            col2.metric("Chunks", len(chunks))
+            # show embeddings only when semantic search is enabled
+            if st.session_state.get("use_semantic", False) and embeddings is not None:
+                col3.metric("Embeddings", len(embeddings))
 
-    col1, col2, col3 = st.columns(3)
 
-    with col1:
-        st.metric("Files", len(data))
-
-    with col2:
-        st.metric("Chunks", len(chunks))
-
-    with col3:
-        st.metric("Embeddings", len(embeddings) if embeddings is not None else 0)
+# NOTE: repository status moved to sidebar only
 
 
 # -------------------------
@@ -124,7 +172,7 @@ if data or chunks:
 # -------------------------
 
 if chunks:
-    st.divider()
+    st.markdown("## Ask a question")
 
     col1, col2, col3, col4 = st.columns([6, 2, 2, 1])
 
@@ -140,10 +188,14 @@ if chunks:
         )
 
     with col3:
+        # limit search mode options unless semantic search was enabled in sidebar
+        use_semantic = st.session_state.get("use_semantic", False)
+        mode_options = ["None", "Text"] + (["Semantic"] if use_semantic else [])
+        default_index = 1 if "Text" in mode_options else 0
         tool_choice = st.selectbox(
             "Search mode",
-            ["None", "Text", "Semantic"],
-            index=1,
+            mode_options,
+            index=default_index,
             key="tool_select",
         )
 
