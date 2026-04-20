@@ -1,7 +1,7 @@
 import re
 
 
-def chunk_by_sliding_window(documents: list[dict], chunk_size: int = 2000, step: int = 1000) -> list[dict]:
+def chunk_by_sliding_window(documents: list[dict], chunk_size: int = 500, step: int = 1000) -> list[dict]:
     """Chunk documents using a sliding window.
 
     Args:

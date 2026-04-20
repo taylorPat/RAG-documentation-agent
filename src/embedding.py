@@ -1,5 +1,4 @@
 import numpy as np
-import tqdm
 
 
 class Embedding:
@@ -19,11 +18,17 @@ class Embedding:
         self._ensure_model()
         return self.model.encode(content)
 
-    def create_batch(self, chunks: list[dict]) -> np.array:
+    def create_batch(self, chunks: list[dict], progress_callback=None) -> np.array:
         self._ensure_model()
         embedded_chunks = []
-        for chunk in tqdm.tqdm(chunks):
+        total = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
             embedding = self.create(content=chunk.get("content", ""))
             embedded_chunks.append(embedding)
+            if progress_callback:
+                try:
+                    progress_callback(idx, total)
+                except Exception:
+                    pass
         return np.array(embedded_chunks)
     

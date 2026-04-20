@@ -45,7 +45,7 @@ def repo_input_form():
                     "Chunk size (chars)",
                     min_value=100,
                     max_value=20000,
-                    value=st.session_state.get("chunk_size", 2000),
+                    value=st.session_state.get("chunk_size", 500),
                     step=100,
                     key="chunk_size_input",
                 )
@@ -77,7 +77,7 @@ def repo_input_form():
                 "Chunk size (chars)",
                 min_value=100,
                 max_value=20000,
-                value=st.session_state.get("chunk_size", 2000),
+                value=st.session_state.get("chunk_size", 500),
                 step=100,
                 key="chunk_size_input_upload",
             )

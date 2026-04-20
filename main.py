@@ -95,7 +95,7 @@ if fetch:
         # chunking: show spinner in sidebar only when semantic search is enabled
         use_semantic = st.session_state.get("use_semantic", False)
         if use_semantic:
-            chunk_size = st.session_state.get("chunk_size", 2000)
+            chunk_size = st.session_state.get("chunk_size", 500)
             with st.sidebar:
                 with st.spinner("Chunking documents..."):
                     chunks = chunk_by_sliding_window(
@@ -117,16 +117,19 @@ if fetch:
                             embeddings = np.load(emb_path)
                         else:
                             embedding = Embedding()
-                            contents = [c.get("content", "") for c in chunks]
-
+                            # create embeddings with a Streamlit progress bar
+                            progress_bar = st.sidebar.progress(0)
                             try:
-                                embeddings = np.array(embedding.create(content=contents))
-                            except Exception:
-                                embeddings = np.array(
-                                    [embedding.create(content=c) for c in contents]
+                                embeddings = embedding.create_batch(
+                                    chunks,
+                                    progress_callback=lambda processed, total: progress_bar.progress(
+                                        int(processed / total * 100)
+                                    ),
                                 )
-
-                            np.save(emb_path, embeddings)
+                                embeddings = np.array(embeddings)
+                                np.save(emb_path, embeddings)
+                            finally:
+                                progress_bar.progress(100)
             finally:
                 st.session_state["processing_embeddings"] = False
 
@@ -174,34 +177,31 @@ if data or chunks:
 if chunks:
     st.markdown("## Ask a question")
 
-    col1, col2, col3, col4 = st.columns([6, 2, 2, 1])
+    with st.form(key="query_form"):
+        inp_col, model_col, mode_col = st.columns([6, 2, 2])
 
-    with col1:
-        query = st.text_input("Ask a question", key="query_input")
+        query = inp_col.text_input("Ask a question", key="query_input")
 
-    with col2:
-        model = st.selectbox(
+        model = model_col.selectbox(
             "Model",
             ["kimi-k2.5:cloud", "qwen2.5:0.5b"],
             index=1,
             key="model_select",
         )
 
-    with col3:
-        # limit search mode options unless semantic search was enabled in sidebar
         use_semantic = st.session_state.get("use_semantic", False)
         mode_options = ["None", "Text"] + (["Semantic"] if use_semantic else [])
         default_index = 1 if "Text" in mode_options else 0
-        tool_choice = st.selectbox(
+
+        tool_choice = mode_col.selectbox(
             "Search mode",
             mode_options,
             index=default_index,
             key="tool_select",
         )
 
-    with col4:
-        ask_clicked = st.button("Ask")
-
+        # This will now be full width of the page content
+        ask_clicked = st.form_submit_button("Ask", use_container_width=True)
 
     # -------------------------
     # EXECUTION
